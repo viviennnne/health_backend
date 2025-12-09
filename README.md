@@ -18,14 +18,15 @@ A simple health tracking backend implemented in C++17, with:
 
 ---
 
-Folder Structure
+## Folder Structure
 
 health_backend/
-├── main.cpp               # 後端核心測試程式（不開 HTTP）
-├── server.cpp             # HTTP server 入口（提供 REST API）
-├── httplib.h              # Header-only HTTP library (cpp-httplib)
+├── main.cpp                     # Core backend testing (no HTTP)
+├── server.cpp                   # HTTP server entry point (REST API)
+├── httplib.h                    # cpp-httplib (header-only HTTP library)
+│
 ├── external/
-│   └── json.hpp           # nlohmann JSON single header
+│   └── json.hpp                 # nlohmann JSON header-only library
 │
 ├── backend/
 │   ├── HealthBackend.hpp
@@ -50,11 +51,11 @@ health_backend/
 ├── helpers/
 │   ├── validation.hpp
 │   ├── validation.cpp
-│   ├── json.hpp              # (已被 nlohmann 取代)
+│   ├── json.hpp                 # (replaced by nlohmann/json)
 │
 └── data/
-    └── storage.json          # Persistent storage (auto-generated)
-    └── storage.example.json    # Example structure (no real data)
+    ├── storage.json             # Auto-generated persistent storage
+    └── storage.example.json     # Example layout (no real data)
 
 ---
 
