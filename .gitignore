@@ -50,6 +50,9 @@ run
 data/*
 !data/.gitkeep
 
+# >>> ⭐ 新增：保留示例 JSON
+!data/storage.example.json   
+
 # ==========================
 #   JSON auto-save (if any)
 # ==========================
@@ -57,5 +60,7 @@ data/*
 
 # Keep your source JSON config if needed:
 !config.json
+
+!external/json.hpp        
 
 server_app

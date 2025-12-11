@@ -6,7 +6,7 @@
 #include "../external/json.hpp"
 #include "User.hpp"
 
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 
 class UserBackend {
 private:

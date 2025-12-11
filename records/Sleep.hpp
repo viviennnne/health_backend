@@ -37,8 +37,8 @@ public:
                        double minHours) const;
 
     // JSON 匯出 / 匯入
-    nlohmann::json toJson() const;
-    void fromJson(const nlohmann::json& j);
+    nlohmann::ordered_json toJson() const;
+    void fromJson(const nlohmann::ordered_json& j);
 };
 
 #endif

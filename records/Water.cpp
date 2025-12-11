@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 
 // 假設 WaterRecord 在 Water.hpp 是：
 // struct WaterRecord {

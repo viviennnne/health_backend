@@ -1,16 +1,89 @@
 #include "HealthBackend.hpp"
+#include "../external/json.hpp"
+
+#include <unistd.h>     // readlink
+#ifdef __APPLE__
+#include <mach-o/dyld.h> // _NSGetExecutablePath
+#endif
+
+#include <sys/stat.h>   // stat, mkdir
+#include <sys/types.h>
 
 #include <fstream>
 #include <random>
 #include <iostream>
 
+// 使用 nlohmann::json 方便寫成 json
+using nlohmann::json;
+
+// 小工具：檢查資料夾是否存在
+static bool dirExists(const std::string &path) {
+    struct stat st {};
+    if (stat(path.c_str(), &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+}
+
+// ----------------------
+// 初始化：決定 storagePath
+// ----------------------
+
+void HealthBackend::initStoragePath() {
+    char exePath[1024] = {0};
+    std::string exeDir = ".";
+
+#if defined(__APPLE__)
+    // macOS: 用 _NSGetExecutablePath
+    uint32_t size = sizeof(exePath);
+    if (_NSGetExecutablePath(exePath, &size) == 0) {
+        exeDir = exePath;
+    }
+#elif defined(__linux__)
+    // Linux: 讀 /proc/self/exe
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len != -1) {
+        exePath[len] = '\0';
+        exeDir = exePath;
+    }
+#else
+    exeDir = ".";
+#endif
+
+    // 去掉檔名字，只留下資料夾
+    auto pos = exeDir.find_last_of("/\\");
+    if (pos != std::string::npos) {
+        exeDir = exeDir.substr(0, pos);
+    }
+
+    // data 資料夾 & storage.json
+    std::string dataFolder = exeDir + "/data";
+    storagePath = dataFolder + "/storage.json";
+    // 強制存檔到專案目錄的相對路徑，不使用真實執行檔路徑
+    storagePath = "data/storage.json";
+}
+
+// 建立 data/ 資料夾（如果不存在）
+void HealthBackend::ensureStorageDirExists() const {
+    // 從 storagePath 反推資料夾
+    auto pos = storagePath.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        return; // 找不到資料夾路徑就算了（會寫在當前目錄）
+    }
+    std::string dir = storagePath.substr(0, pos);
+
+    if (!dirExists(dir)) {
+        // 0755： rwxr-xr-x
+        mkdir(dir.c_str(), 0755);
+    }
+}
+
 // ----------------------
 // 建構 / 解構：處理載入 / 儲存
 // ----------------------
 
-HealthBackend::HealthBackend()
-    : storagePath("data/storage.json") {
-    loadFromFile();
+HealthBackend::HealthBackend() {
+    initStoragePath();        // ⭐ 依照執行檔位置決定 data/storage.json
+    ensureStorageDirExists(); // ⭐ 確保 data/ 存在
+    loadFromFile();           // ⭐ 嘗試載入舊有資料
 }
 
 HealthBackend::~HealthBackend() {
@@ -45,7 +118,7 @@ std::string HealthBackend::generateToken() const {
 }
 
 // ----------------------
-// 檔案 I/O
+// 檔案 I/O：load / save
 // ----------------------
 
 void HealthBackend::loadFromFile() {
@@ -137,6 +210,8 @@ void HealthBackend::loadFromFile() {
 }
 
 void HealthBackend::saveToFile() const {
+    ensureStorageDirExists();  // ⭐ 存檔前再確認一次資料夾存在
+
     json j;
     j["users"] = json::array();
 
@@ -485,7 +560,7 @@ bool HealthBackend::addOtherRecord(const std::string& token,
                                    const std::string& categoryName,
                                    const std::string& datetime,
                                    double             value,
-                                   const std::string& note) 
+                                   const std::string& note)
 {
     UserData* user = getUserByToken(token);
     if (!user) return false;
@@ -545,6 +620,19 @@ bool HealthBackend::deleteOtherRecord(const std::string& token,
     if (index >= vec.size()) return false;
 
     vec.erase(vec.begin() + static_cast<long>(index));
+    saveToFile();
+    return true;
+}
+
+// 刪掉整個 category，不管裡面有沒有 item
+bool HealthBackend::deleteCategory(const std::string& token,
+                                   const std::string& categoryName) {
+    UserData* user = getUserByToken(token);
+    if (!user) return false;
+    auto it = user->categories.find(categoryName);
+    if (it == user->categories.end()) return false;
+
+    user->categories.erase(it);   // 直接整個刪掉這個 category
     saveToFile();
     return true;
 }

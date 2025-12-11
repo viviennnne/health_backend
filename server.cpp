@@ -1,3 +1,6 @@
+// server.cpp
+// ===== CHANGED: 加上 CORS、修好 Category 建立/新增/刪除流程 =====
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -5,6 +8,8 @@
 #include "httplib.h"
 #include "backend/HealthBackend.hpp"
 #include "external/json.hpp"
+
+using json = nlohmann::ordered_json;
 
 // 從 Authorization header 取出 Bearer token
 // 規格：Authorization: Bearer <jwt>
@@ -22,51 +27,20 @@ std::string getTokenFromAuthHeader(const httplib::Request &req) {
     return "";
 }
 
-// 將 0-based index 轉成對外用的 id 字串，例如 index=0 -> "item-1"
-std::string makeCategoryItemId(std::size_t index) {
-    return "item-" + std::to_string(index + 1);
-}
-
-// 將前端傳來的 id 轉回 0-based index
-// 支援兩種格式：
-//   1. "item-3" -> index = 2
-//   2. "5"      -> index = 5  (純數字也允許，方便你自己測試)
-bool parseCategoryItemId(const std::string &idStr, std::size_t &index) {
-    try {
-        if (idStr.rfind("item-", 0) == 0) {
-            // 開頭是 "item-"
-            std::string numStr = idStr.substr(5); // 拿掉 "item-"
-            std::size_t n = static_cast<std::size_t>(std::stoul(numStr));
-            if (n == 0) return false;            // 不接受 item-0
-            index = n - 1;                       // 轉成 0-based
-            return true;
-        } else {
-            // 純數字也接受
-            index = static_cast<std::size_t>(std::stoul(idStr));
-            return true;
-        }
-    } catch (...) {
-        return false;
-    }
-}
-
 int main() {
     HealthBackend backend;
     httplib::Server svr;
 
-    // CORS: respond to preflight and add headers to every response
-    svr.Options(R"(.*)", [](const httplib::Request &req, httplib::Response &res) {
-        // Allow requests from any origin (adjust if you want to restrict)
+    // ===== NEW: CORS 設定（前端在別的 Port/Domain 時也能用） =====
+    svr.Options(R"(.*)", [](const httplib::Request & /*req*/, httplib::Response &res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
         res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         res.set_header("Access-Control-Max-Age", "3600");
-        res.status = 204; // No Content for preflight
+        res.status = 204; // No Content
     });
 
-    // Inject CORS headers to all responses via a post-routing hook
-    svr.set_post_routing_handler([&](const httplib::Request & /*req*/, httplib::Response &res) {
-        // Only add header if it's not already present
+    svr.set_post_routing_handler([](const httplib::Request & /*req*/, httplib::Response &res) {
         if (res.get_header_value("Access-Control-Allow-Origin").empty()) {
             res.set_header("Access-Control-Allow-Origin", "*");
         }
@@ -78,7 +52,7 @@ int main() {
         }
     });
 
-    // =======================
+    // ======================
     //      Health Check
     // =======================
     svr.Get("/health", [](const httplib::Request &, httplib::Response &res) {
@@ -100,7 +74,6 @@ int main() {
         try {
             json j = json::parse(req.body);
 
-            // 檢查必要欄位
             if (!j.contains("name") ||
                 !j.contains("password") ||
                 !j.contains("age") ||
@@ -130,7 +103,6 @@ int main() {
                 return;
             }
 
-            // 註冊成功後，直接幫他登入一次取得 token
             std::string token = backend.login(name, password);
             if (token == "INVALID") {
                 json err;
@@ -235,7 +207,7 @@ int main() {
         }
 
         double bmi = backend.getBMI(token);
-        if (bmi <= 0.0) {  // 簡單判斷，當成找不到 profile
+        if (bmi <= 0.0) {
             json err;
             err["errorMessage"] = "Profile not found";
             res.status = 404;
@@ -253,8 +225,6 @@ int main() {
     //        Waters
     // =======================
 
-    // POST /waters
-    // Body: { "datetime":"...","amountMl":250 }
     svr.Post("/waters", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -300,7 +270,7 @@ int main() {
             const auto &r   = records[idx];
 
             json out;
-            out["id"]       = std::to_string(idx);  // index 當作 id
+            out["id"]       = std::to_string(idx);
             out["datetime"] = r.datetime;
             out["amountMl"] = r.amountMl;
             res.status = 201;
@@ -313,7 +283,6 @@ int main() {
         }
     });
 
-    // GET /waters
     svr.Get("/waters", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -340,7 +309,6 @@ int main() {
         res.set_content(arr.dump(), "application/json");
     });
 
-    // PATCH /waters/{id}
     svr.Patch(R"(/waters/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -408,7 +376,6 @@ int main() {
         }
     });
 
-    // DELETE /waters/{id}
     svr.Delete(R"(/waters/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -440,7 +407,7 @@ int main() {
             return;
         }
 
-        res.status = 204;  // No Content
+        res.status = 204;
         res.set_content("", "application/json");
     });
 
@@ -448,8 +415,6 @@ int main() {
     //         Sleeps
     // =======================
 
-    // POST /sleeps
-    // Body: { "datetime":"...","hours":7.5 }
     svr.Post("/sleeps", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -508,7 +473,6 @@ int main() {
         }
     });
 
-    // GET /sleeps
     svr.Get("/sleeps", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -535,7 +499,6 @@ int main() {
         res.set_content(arr.dump(), "application/json");
     });
 
-    // PATCH /sleeps/{id}
     svr.Patch(R"(/sleeps/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -603,7 +566,6 @@ int main() {
         }
     });
 
-    // DELETE /sleeps/{id}
     svr.Delete(R"(/sleeps/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -643,8 +605,6 @@ int main() {
     //       Activities
     // =======================
 
-    // POST /activities
-    // Body: { "datetime":"...","minutes":30,"intensity":"moderate" }
     svr.Post("/activities", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -707,7 +667,6 @@ int main() {
         }
     });
 
-    // GET /activities
     svr.Get("/activities", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -735,7 +694,6 @@ int main() {
         res.set_content(arr.dump(), "application/json");
     });
 
-    // PATCH /activities/{id}
     svr.Patch(R"(/activities/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -807,7 +765,6 @@ int main() {
         }
     });
 
-    // DELETE /activities/{id}
     svr.Delete(R"(/activities/(\d+))", [&backend](const httplib::Request &req, httplib::Response &res) {
         std::string token = getTokenFromAuthHeader(req);
         if (token.empty()) {
@@ -863,7 +820,7 @@ int main() {
         json arr = json::array();
         for (const auto &name : cats) {
             json jc;
-            jc["id"]           = name;  // 名稱當 id
+            jc["id"]           = name;
             jc["categoryName"] = name;
             arr.push_back(jc);
         }
@@ -872,49 +829,78 @@ int main() {
         res.set_content(arr.dump(), "application/json");
     });
 
+    // ===== CHANGED: /category/create 會呼叫 backend.createCategory =====
     // POST /category/create
     svr.Post("/category/create", [&backend](const httplib::Request &req, httplib::Response &res) {
-    std::string token = getTokenFromAuthHeader(req);
-    if (token.empty()) {
-        json err; err["errorMessage"] = "Missing or invalid Authorization token";
-        res.status = 401;
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-
-    try {
-        json j = json::parse(req.body);
-
-        if (!j.contains("categoryName")) {
-            json err; err["errorMessage"] = "Missing categoryName";
-            res.status = 400;
+        std::string token = getTokenFromAuthHeader(req);
+        if (token.empty()) {
+            json err;
+            err["errorMessage"] = "Missing or invalid Authorization token";
+            res.status = 401;
             res.set_content(err.dump(), "application/json");
             return;
         }
 
-        std::string name = j["categoryName"].get<std::string>();
+        try {
+            json j = json::parse(req.body);
+            if (!j.contains("categoryName")) {
+                json err;
+                err["errorMessage"] = "Missing categoryName";
+                res.status = 400;
+                res.set_content(err.dump(), "application/json");
+                return;
+            }
 
-        // ⚠️ 這裡新增 category（空 vector）
-        if (!backend.createCategory(token, name)) {
-            json err; err["errorMessage"] = "Category already exists or invalid name";
+            std::string name = j["categoryName"].get<std::string>();
+
+            bool ok = backend.createCategory(token, name);
+            if (!ok) {
+                json err;
+                err["errorMessage"] = "Category already exists or invalid name";
+                res.status = 400;
+                res.set_content(err.dump(), "application/json");
+                return;
+            }
+
+            json out;
+            out["id"]           = name;
+            out["categoryName"] = name;
+            res.status = 201;
+            res.set_content(out.dump(), "application/json");
+        } catch (const std::exception &e) {
+            json err;
+            err["errorMessage"] = std::string("Invalid JSON: ") + e.what();
             res.status = 400;
+            res.set_content(err.dump(), "application/json");
+        }
+    });
+
+    // ===== NEW: DELETE 整個 category =====
+    // DELETE /category/{categoryId}
+    svr.Delete(R"(/category/([^/]+)$)", [&backend](const httplib::Request &req, httplib::Response &res) {
+        std::string token = getTokenFromAuthHeader(req);
+        if (token.empty()) {
+            json err;
+            err["errorMessage"] = "Missing or invalid Authorization token";
+            res.status = 401;
             res.set_content(err.dump(), "application/json");
             return;
         }
 
-        json out;
-        out["id"] = name;
-        out["categoryName"] = name;
+        std::string categoryId = req.matches[1];
 
-        res.status = 201;
-        res.set_content(out.dump(), "application/json");
-    }
-    catch (...) {
-        json err; err["errorMessage"] = "Invalid JSON";
-        res.status = 400;
-        res.set_content(err.dump(), "application/json");
-    }
-});
+        bool ok = backend.deleteCategory(token, categoryId);
+        if (!ok) {
+            json err;
+            err["errorMessage"] = "Category not found";
+            res.status = 404;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        res.status = 204;
+        res.set_content("", "application/json");
+    });
 
     // GET /category/{categoryId}/list
     svr.Get(R"(/category/([^/]+)/list)", [&backend](const httplib::Request &req, httplib::Response &res) {
@@ -942,7 +928,7 @@ int main() {
         for (std::size_t i = 0; i < records.size(); ++i) {
             const auto &r = records[i];
             json jr;
-            jr["id"]       = makeCategoryItemId(i);
+            jr["id"]       = std::to_string(i);
             jr["datetime"] = r.datetime;
             jr["note"]     = r.note;
             arr.push_back(jr);
@@ -978,11 +964,10 @@ int main() {
             std::string datetime = j["datetime"].get<std::string>();
             std::string note     = j["note"].get<std::string>();
 
-            // 後端需要 value，我們用 0.0 佔位
             bool ok = backend.addOtherRecord(token, categoryId, datetime, 0.0, note);
             if (!ok) {
                 json err;
-                err["errorMessage"] = "Failed to add category item";
+                err["errorMessage"] = "Category not found or invalid data";
                 res.status = 400;
                 res.set_content(err.dump(), "application/json");
                 return;
