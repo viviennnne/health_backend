@@ -465,21 +465,41 @@ std::vector<std::string> HealthBackend::getOtherCategories(const std::string& to
     return cats;
 }
 
+bool HealthBackend::createCategory(const std::string& token,
+                                   const std::string& name)
+{
+    if (name.empty()) return false;
+    UserData* user = getUserByToken(token);
+    if (!user) return false;
+
+    if (user->categories.find(name) != user->categories.end())
+        return false; // 已存在
+
+    user->categories[name] = {};  // 建立空 category
+    saveToFile();
+    return true;
+}
+
+// ⚠️ 不再自動建立 category
 bool HealthBackend::addOtherRecord(const std::string& token,
                                    const std::string& categoryName,
                                    const std::string& datetime,
                                    double             value,
-                                   const std::string& note) {
-    if (categoryName.empty()) return false;
+                                   const std::string& note) 
+{
     UserData* user = getUserByToken(token);
     if (!user) return false;
+
+    auto it = user->categories.find(categoryName);
+    if (it == user->categories.end())
+        return false;              // ❌ category 不存在 → 回傳 false
 
     CategoryItem item;
     item.datetime = datetime;
     item.note     = note;
     item.value    = value;
 
-    user->categories[categoryName].push_back(item);
+    it->second.push_back(item);
     saveToFile();
     return true;
 }
@@ -525,10 +545,6 @@ bool HealthBackend::deleteOtherRecord(const std::string& token,
     if (index >= vec.size()) return false;
 
     vec.erase(vec.begin() + static_cast<long>(index));
-    if (vec.empty()) {
-        // 額外：如果該 category 沒有 item 了，就直接刪掉這個 category
-        user->categories.erase(it);
-    }
     saveToFile();
     return true;
 }

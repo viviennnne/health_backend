@@ -22,6 +22,34 @@ std::string getTokenFromAuthHeader(const httplib::Request &req) {
     return "";
 }
 
+// 將 0-based index 轉成對外用的 id 字串，例如 index=0 -> "item-1"
+std::string makeCategoryItemId(std::size_t index) {
+    return "item-" + std::to_string(index + 1);
+}
+
+// 將前端傳來的 id 轉回 0-based index
+// 支援兩種格式：
+//   1. "item-3" -> index = 2
+//   2. "5"      -> index = 5  (純數字也允許，方便你自己測試)
+bool parseCategoryItemId(const std::string &idStr, std::size_t &index) {
+    try {
+        if (idStr.rfind("item-", 0) == 0) {
+            // 開頭是 "item-"
+            std::string numStr = idStr.substr(5); // 拿掉 "item-"
+            std::size_t n = static_cast<std::size_t>(std::stoul(numStr));
+            if (n == 0) return false;            // 不接受 item-0
+            index = n - 1;                       // 轉成 0-based
+            return true;
+        } else {
+            // 純數字也接受
+            index = static_cast<std::size_t>(std::stoul(idStr));
+            return true;
+        }
+    } catch (...) {
+        return false;
+    }
+}
+
 int main() {
     HealthBackend backend;
     httplib::Server svr;
@@ -845,40 +873,48 @@ int main() {
     });
 
     // POST /category/create
-    svr.Post("/category/create", [](const httplib::Request &req, httplib::Response &res) {
-        std::string token = getTokenFromAuthHeader(req);
-        if (token.empty()) {
-            json err;
-            err["errorMessage"] = "Missing or invalid Authorization token";
-            res.status = 401;
+    svr.Post("/category/create", [&backend](const httplib::Request &req, httplib::Response &res) {
+    std::string token = getTokenFromAuthHeader(req);
+    if (token.empty()) {
+        json err; err["errorMessage"] = "Missing or invalid Authorization token";
+        res.status = 401;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    try {
+        json j = json::parse(req.body);
+
+        if (!j.contains("categoryName")) {
+            json err; err["errorMessage"] = "Missing categoryName";
+            res.status = 400;
             res.set_content(err.dump(), "application/json");
             return;
         }
 
-        try {
-            json j = json::parse(req.body);
-            if (!j.contains("categoryName")) {
-                json err;
-                err["errorMessage"] = "Missing categoryName";
-                res.status = 400;
-                res.set_content(err.dump(), "application/json");
-                return;
-            }
+        std::string name = j["categoryName"].get<std::string>();
 
-            std::string name = j["categoryName"].get<std::string>();
-
-            json out;
-            out["id"]           = name;
-            out["categoryName"] = name;
-            res.status = 201;
-            res.set_content(out.dump(), "application/json");
-        } catch (const std::exception &e) {
-            json err;
-            err["errorMessage"] = std::string("Invalid JSON: ") + e.what();
+        // ⚠️ 這裡新增 category（空 vector）
+        if (!backend.createCategory(token, name)) {
+            json err; err["errorMessage"] = "Category already exists or invalid name";
             res.status = 400;
             res.set_content(err.dump(), "application/json");
+            return;
         }
-    });
+
+        json out;
+        out["id"] = name;
+        out["categoryName"] = name;
+
+        res.status = 201;
+        res.set_content(out.dump(), "application/json");
+    }
+    catch (...) {
+        json err; err["errorMessage"] = "Invalid JSON";
+        res.status = 400;
+        res.set_content(err.dump(), "application/json");
+    }
+});
 
     // GET /category/{categoryId}/list
     svr.Get(R"(/category/([^/]+)/list)", [&backend](const httplib::Request &req, httplib::Response &res) {
@@ -906,9 +942,9 @@ int main() {
         for (std::size_t i = 0; i < records.size(); ++i) {
             const auto &r = records[i];
             json jr;
-            jr["id"]         = std::to_string(i);
-            jr["datetime"]   = r.datetime;
-            jr["note"]       = r.note;
+            jr["id"]       = makeCategoryItemId(i);
+            jr["datetime"] = r.datetime;
+            jr["note"]     = r.note;
             arr.push_back(jr);
         }
 

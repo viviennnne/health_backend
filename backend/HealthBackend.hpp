@@ -144,7 +144,9 @@ public:
     bool deleteOtherRecord(const std::string& token,
                            const std::string& categoryName,
                            std::size_t       index);
-
+    
+    bool createCategory(const std::string& token, const std::string& name);
+                    
 private:
     // 每個 user 的完整資料
     struct UserData {
