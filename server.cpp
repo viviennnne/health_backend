@@ -16,6 +16,8 @@
 
 using json = nlohmann::ordered_json;
 
+using json = nlohmann::ordered_json;
+
 // 從 Authorization header 取出 Bearer token
 // 規格：Authorization: Bearer <jwt>
 std::string getTokenFromAuthHeader(const httplib::Request& req) {
