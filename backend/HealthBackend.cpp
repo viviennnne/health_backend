@@ -3,6 +3,7 @@
 #include <fstream>
 #include <random>
 #include <iostream>
+#include "../helpers/Logger.hpp"
 
 // ----------------------
 // 建構 / 解構：處理載入 / 儲存
@@ -59,7 +60,7 @@ void HealthBackend::loadFromFile() {
     try {
         in >> j;
     } catch (...) {
-        std::cerr << "Failed to parse " << storagePath << ", starting empty.\n";
+        util::Logger::error(std::string("Failed to parse ") + storagePath + ", starting empty.");
         return;
     }
 
@@ -198,7 +199,7 @@ void HealthBackend::saveToFile() const {
 
     std::ofstream out(storagePath);
     if (!out) {
-        std::cerr << "Failed to open " << storagePath << " for writing.\n";
+        util::Logger::error(std::string("Failed to open ") + storagePath + " for writing.");
         return;
     }
     out << j.dump(2);

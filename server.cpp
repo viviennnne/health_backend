@@ -3,8 +3,13 @@
 #include <vector>
 
 #include "httplib.h"
+#include <unordered_map>
+#include <mutex>
+#include <chrono>
 #include "backend/HealthBackend.hpp"
 #include "external/json.hpp"
+#include "helpers/Logger.hpp"
+#include <cstdlib>
 
 // 從 Authorization header 取出 Bearer token
 // 規格：Authorization: Bearer <jwt>
@@ -26,6 +31,21 @@ int main() {
     HealthBackend backend;
     httplib::Server svr;
 
+    // Initialize logger -------------------------------
+    const char *logFileEnv = std::getenv("LOG_FILE");
+    std::string logFilePath = logFileEnv ? logFileEnv : "logs/server.log";
+    const char *logLevelEnv = std::getenv("LOG_LEVEL");
+    util::LogLevel level = util::LogLevel::Info;
+    if (logLevelEnv) {
+        std::string s = logLevelEnv;
+        if (s == "DEBUG") level = util::LogLevel::Debug;
+        else if (s == "WARN") level = util::LogLevel::Warning;
+        else if (s == "ERROR") level = util::LogLevel::Error;
+        else level = util::LogLevel::Info;
+    }
+    util::Logger::init(logFilePath, level);
+    // --------------------------------------------------
+
     // CORS: respond to preflight and add headers to every response
     svr.Options(R"(.*)", [](const httplib::Request &req, httplib::Response &res) {
         // Allow requests from any origin (adjust if you want to restrict)
@@ -36,8 +56,34 @@ int main() {
         res.status = 204; // No Content for preflight
     });
 
-    // Inject CORS headers to all responses via a post-routing hook
-    svr.set_post_routing_handler([&](const httplib::Request & /*req*/, httplib::Response &res) {
+    // Log exceptions
+    svr.set_exception_handler([](const httplib::Request &req, httplib::Response &res, std::exception_ptr ep) {
+        (void)res; // we don't modify response here
+        std::string origin = req.has_header("Origin") ? req.get_header_value("Origin") : "-";
+        try {
+            if (ep) std::rethrow_exception(ep);
+        } catch (const std::exception &e) {
+            util::Logger::error(std::string("Unhandled exception handling request: ") + req.method + " " + req.path + " Origin:" + origin + " error: " + e.what());
+        } catch (...) {
+            util::Logger::error(std::string("Unhandled exception handling request: ") + req.method + " " + req.path + " Origin:" + origin + " error: unknown");
+        }
+    });
+
+    // We'll track request start times so we can log durations.
+    static std::mutex _req_mtx;
+    static std::unordered_map<const httplib::Request *, std::chrono::steady_clock::time_point> _req_start;
+
+    // Pre-routing: record start time
+    svr.set_pre_routing_handler([&](const httplib::Request &req, httplib::Response & /*res*/) -> httplib::Server::HandlerResponse {
+        std::lock_guard<std::mutex> lk(_req_mtx);
+        _req_start[&req] = std::chrono::steady_clock::now();
+        auto origin = req.has_header("Origin") ? req.get_header_value("Origin") : "-";
+        util::Logger::info(req.method + std::string(" ") + req.path + " Origin:" + origin);
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
+    // Inject CORS headers and log request info via a post-routing hook
+    svr.set_post_routing_handler([&](const httplib::Request &req, httplib::Response &res) {
         // Only add header if it's not already present
         if (res.get_header_value("Access-Control-Allow-Origin").empty()) {
             res.set_header("Access-Control-Allow-Origin", "*");
@@ -48,6 +94,32 @@ int main() {
         if (res.get_header_value("Access-Control-Allow-Methods").empty()) {
             res.set_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
         }
+        // Log request duration
+        std::chrono::steady_clock::time_point start;
+        {
+            std::lock_guard<std::mutex> lk(_req_mtx);
+            auto it = _req_start.find(&req);
+            if (it != _req_start.end()) {
+                start = it->second;
+                _req_start.erase(it);
+            }
+        }
+        if (start.time_since_epoch().count() > 0) {
+            auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start).count();
+            util::Logger::info(req.method + std::string(" ") + req.path + " -> " + std::to_string(res.status) + " (" + std::to_string(dur) + " ms)");
+        }
+    });
+
+    // Set httplib server-level logging to route through our Logger
+    svr.set_logger([](const httplib::Request &req, const httplib::Response &res) {
+        (void)res;
+        auto origin = req.has_header("Origin") ? req.get_header_value("Origin") : "-";
+        util::Logger::debug(std::string("httplib log: ") + req.method + " " + req.path + " Origin:" + origin);
+    });
+    svr.set_error_logger([](const httplib::Error &err, const httplib::Request *req) {
+        std::string path = req ? req->path : "-";
+        util::Logger::warn(std::string("httplib error: ") + std::to_string(static_cast<int>(err)) + " path:" + path);
     });
 
     // =======================
@@ -1081,8 +1153,10 @@ int main() {
         res.set_content("", "application/json");
     });
 
-    std::cout << "Server started at http://0.0.0.0:8080\n";
+    util::Logger::info("Server started at http://0.0.0.0:8080");
     svr.listen("0.0.0.0", 8080);
+
+    util::Logger::shutdown();
 
     return 0;
 }

@@ -84,6 +84,7 @@ g++ -std=c++17 \
   records/Activity.cpp \
   records/OtherCategory.cpp \
   helpers/validation.cpp \
+  helpers/Logger.cpp \
   -o server_app
 ```
 
@@ -101,6 +102,17 @@ Expected output:
 
 ```
 Server started at http://0.0.0.0:8080
+
+Logs are written to `logs/server.log` by default. You can change the behaviour by setting environment variables before starting the server:
+
+- `LOG_FILE`: path to the log file (default `logs/server.log`)
+- `LOG_LEVEL`: `DEBUG`, `INFO`, `WARN`, or `ERROR` (default `INFO`)
+
+Example:
+
+```bash
+LOG_FILE="/var/log/health_backend.log" LOG_LEVEL=DEBUG ./server_app
+```
 ```
 
 Open in browser:
