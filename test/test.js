@@ -245,7 +245,7 @@ async function testStandardResource(
   }
 
   // 4. Delete (DELETE)
-  const deleteRes = await apiRequest(`${endpoint}/${createdId}`, "DELETE");
+  const deleteRes = await apiRequest(`${endpoint}/${createdId}`, "DELETE",{});
   if (deleteRes.success && deleteRes.status === 204) {
     log(`${resourceName} Delete`, `Item deleted successfully`, "PASS");
   } else {
@@ -348,7 +348,7 @@ async function testCustomCategories() {
   }
 
   // 6. Delete Item
-  const delItemRes = await apiRequest(`/category/${catId}/${itemId}`, "DELETE");
+  const delItemRes = await apiRequest(`/category/${catId}/${itemId}`, "DELETE",{});
   if (delItemRes.success) {
     log("Category Item Delete", "Item deleted successfully", "PASS");
   } else {
